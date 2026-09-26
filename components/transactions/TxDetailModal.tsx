@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { scValToNative } from "@stellar/stellar-sdk";
 import { Badge } from "@/components/ui/Badge";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -26,7 +26,63 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const { address, connect } = useWallet();
   const { toast } = useToast();
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const m = STATUS_META[tx.status];
+
+  // Store activeElement and restore on close; focus modal on open
+  useEffect(() => {
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+
+    if (modalRef.current) {
+      const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length > 0) {
+        focusable[0].focus();
+      }
+    }
+
+    return () => {
+      previouslyFocusedRef.current?.focus();
+    };
+  }, []);
+
+  // Escape key & focus trapping
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (e.key === "Tab" && modalRef.current) {
+        const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   async function runTxCall(method: string, extraArgs: string[] = []) {
     if (!CONTRACT_ID) {
@@ -92,6 +148,7 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
 
   return (
     <div
+      role="presentation"
       style={{
         position: "fixed",
         inset: 0,
@@ -104,6 +161,11 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
       onClick={onClose}
     >
       <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tx-detail-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="animate-fade-in"
         style={{
@@ -114,6 +176,7 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
           overflowY: "auto",
           padding: 24,
           position: "relative",
+          outline: "none",
         }}
       >
         {/* Header */}
@@ -125,28 +188,32 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
             marginBottom: 16,
           }}
         >
-          <span
+          <h2
+            id="tx-detail-title"
             style={{
               fontFamily: MONO,
               fontSize: 11,
+              fontWeight: 700,
               color: AMBER,
               letterSpacing: "0.1em",
+              margin: 0,
             }}
           >
             TX DETAIL
-          </span>
+          </h2>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Badge status={tx.status} />
             <button
               onClick={onClose}
-              aria-label="Close"
+              aria-label="Close transaction details"
               style={{
                 background: "none",
                 border: "none",
-                color: DIM,
+                color: "#bbb",
                 cursor: "pointer",
                 fontSize: 18,
                 lineHeight: 1,
+                padding: 4,
               }}
             >
               ✕
@@ -205,8 +272,10 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
               borderRadius: 4,
             }}
           >
-            <div
+            <label
+              htmlFor="tx-fail-reason-input"
               style={{
+                display: "block",
                 fontFamily: MONO,
                 fontSize: 10,
                 color: STATUS_META.FAILED.color,
@@ -216,8 +285,9 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
               }}
             >
               FAIL TRANSACTION REASON
-            </div>
+            </label>
             <textarea
+              id="tx-fail-reason-input"
               value={failReason}
               onChange={(e) => setFailReason(e.target.value)}
               placeholder="Enter failure reason..."
@@ -272,7 +342,7 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
                   padding: "9px 12px",
                   background: "transparent",
                   border: `1px solid ${DIM}`,
-                  color: DIM,
+                  color: "#aaa",
                   cursor: "pointer",
                   fontFamily: MONO,
                   fontSize: 10,
@@ -291,12 +361,14 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
               label={pendingAction === "start_processing" ? "SUBMITTING…" : "START PROCESSING"}
               color={STATUS_META.PROCESSING.color}
               disabled={pendingAction !== null}
+              busy={pendingAction === "start_processing"}
               onClick={() => runTxCall("start_processing")}
             />
             <ActionButton
               label={pendingAction === "complete_transaction" ? "SUBMITTING…" : "COMPLETE"}
               color={STATUS_META.COMPLETED.color}
               disabled={pendingAction !== null}
+              busy={pendingAction === "complete_transaction"}
               onClick={() => runTxCall("complete_transaction")}
             />
             <ActionButton
@@ -309,6 +381,7 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
               label={pendingAction === "is_duplicate" ? "CHECKING…" : "DUPLICATE?"}
               color={AMBER}
               disabled={pendingAction !== null}
+              busy={pendingAction === "is_duplicate"}
               onClick={runIsDuplicate}
             />
           </div>

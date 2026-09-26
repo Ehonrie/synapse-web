@@ -10,16 +10,21 @@ import { useSorobanStatus } from "@/lib/soroban/useSorobanStatus";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { useToast } from "@/components/ui/Toast";
 import { shortId } from "@/lib/utils";
+import { useWalletExtensionDetection } from "@/lib/wallet/detection";
+import { NoWalletGuidance } from "@/components/wallet/NoWalletGuidance";
 
 type Tab = "dashboard" | "transactions" | "admin" | "docs";
 const TABS: Tab[] = ["dashboard", "transactions", "admin", "docs"];
 
 export function Shell() {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [showGuidance, setShowGuidance] = useState(false);
   const { status: rpcStatus, lastEventAge, health: rpcHealth } = useSorobanStatus();
   const { address, connecting, error, connect, disconnect } = useWallet();
+  const { hasAny, checked } = useWalletExtensionDetection();
   const connected = address !== null;
   const { toast } = useToast();
+  const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (error) toast(error, "error");
@@ -33,10 +38,40 @@ export function Shell() {
     prevAddress.current = address;
   }, [address, toast]);
 
+  // Keyboard navigation for tabs (WCAG 2.1 AA TabList Pattern)
+  const handleTabKeyDown = (e: React.KeyboardEvent, index: number) => {
+    let nextIndex = index;
+    if (e.key === "ArrowRight") {
+      nextIndex = (index + 1) % TABS.length;
+    } else if (e.key === "ArrowLeft") {
+      nextIndex = (index - 1 + TABS.length) % TABS.length;
+    } else if (e.key === "Home") {
+      nextIndex = 0;
+    } else if (e.key === "End") {
+      nextIndex = TABS.length - 1;
+    } else {
+      return;
+    }
+    e.preventDefault();
+    setTab(TABS[nextIndex]);
+    const buttons = navRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    buttons?.[nextIndex]?.focus();
+  };
+
+  const handleConnectClick = () => {
+    if (connected) {
+      disconnect();
+    } else if (checked && !hasAny) {
+      setShowGuidance(true);
+    } else {
+      connect();
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* ── Header ── */}
-      <header className="shell-header">
+      <header className="shell-header" role="banner">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.14em", color: "#fff" }}>
             SYNAPSE
@@ -82,13 +117,14 @@ export function Shell() {
             }}
           />
           <button
-            onClick={() => (connected ? disconnect() : connect())}
+            onClick={handleConnectClick}
             disabled={connecting}
+            aria-label={connected ? `Connected account ${address}. Click to disconnect` : "Connect wallet"}
             style={{
               padding: "7px 18px",
               background: connected ? "transparent" : "rgba(245,166,35,0.08)",
               border: `1px solid ${connected ? BORDER : AMBER}`,
-              color: connected ? "#aaa" : AMBER,
+              color: connected ? "#ccc" : AMBER,
               fontFamily: MONO,
               fontSize: 11,
               fontWeight: 600,
@@ -109,14 +145,46 @@ export function Shell() {
         </div>
       </header>
 
+      {/* ── No Wallet Guidance Modal ── */}
+      {showGuidance && (
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.8)",
+            zIndex: 300,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          onClick={() => setShowGuidance(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <NoWalletGuidance
+              onClose={() => setShowGuidance(false)}
+              onProceedAnyway={() => {
+                setShowGuidance(false);
+                connect();
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── Tab Bar ── */}
-      <nav className="shell-nav" role="tablist" aria-label="Sections">
-        {TABS.map((t) => (
+      <nav ref={navRef} className="shell-nav" role="tablist" aria-label="Dashboard sections">
+        {TABS.map((t, idx) => (
           <button
             key={t}
+            id={`tab-${t}`}
             role="tab"
             aria-selected={tab === t}
+            aria-controls={`tabpanel-${t}`}
+            tabIndex={tab === t ? 0 : -1}
             onClick={() => setTab(t)}
+            onKeyDown={(e) => handleTabKeyDown(e, idx)}
             style={{
               padding: "12px 22px",
               background: "none",
@@ -129,21 +197,22 @@ export function Shell() {
               borderBottom: tab === t ? `2px solid ${AMBER}` : "2px solid transparent",
               marginBottom: -1,
               transition: "color 0.15s",
+              outlineOffset: "-2px",
             }}
             onMouseEnter={(e) => {
-              if (tab !== t) e.currentTarget.style.color = "rgba(255,255,255,0.65)";
+              if (tab !== t) e.currentTarget.style.color = "rgba(255,255,255,0.85)";
             }}
             onMouseLeave={(e) => {
               if (tab !== t) e.currentTarget.style.color = DIM;
             }}
           >
-            {t}
+            {t.toUpperCase()}
           </button>
         ))}
       </nav>
 
       {/* ── Body ── */}
-      <main className="shell-main">
+      <main className="shell-main" id={`tabpanel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === "dashboard" && (
           <TabErrorBoundary title="Dashboard tab error">
             <DashboardTab />
@@ -168,6 +237,7 @@ export function Shell() {
 
       {/* ── Footer ── */}
       <footer
+        role="contentinfo"
         style={{
           borderTop: `1px solid ${BORDER}`,
           padding: "10px 28px",

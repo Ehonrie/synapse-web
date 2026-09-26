@@ -30,23 +30,68 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   const needsRetype = Boolean(retypeValue);
   const canConfirm = needsRetype ? typed === retypeValue : true;
 
-  // Focus the retype input (or the cancel button) when the dialog mounts
+  // Store previously focused element and focus dialog/input on open
   useEffect(() => {
-    inputRef.current?.focus();
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+
+    if (inputRef.current) {
+      inputRef.current.focus();
+    } else if (dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length > 0) {
+        focusable[0].focus();
+      }
+    }
+
+    return () => {
+      // Restore focus on close
+      previouslyFocusedRef.current?.focus();
+    };
   }, []);
 
-  // Close on Escape
+  // Close on Escape & Focus Trap
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+        return;
+      }
+
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onCancel]);
 
   const mono: CSSProperties = {
@@ -58,6 +103,7 @@ export function ConfirmDialog({
       {/* Backdrop */}
       <div
         onClick={onCancel}
+        aria-hidden="true"
         style={{
           position: "fixed",
           inset: 0,
@@ -69,9 +115,12 @@ export function ConfirmDialog({
 
       {/* Dialog */}
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-desc"
+        tabIndex={-1}
         style={{
           position: "fixed",
           top: "50%",
@@ -81,6 +130,7 @@ export function ConfirmDialog({
           width: "min(480px, calc(100vw - 32px))",
           background: BG2,
           border: `1px solid ${accentColor}55`,
+          outline: "none",
           ...mono,
         }}
       >
@@ -89,25 +139,26 @@ export function ConfirmDialog({
 
         <div style={{ padding: "20px 22px 22px" }}>
           {/* Title */}
-          <div
+          <h2
             id="confirm-dialog-title"
             style={{
               fontSize: 11,
               fontWeight: 700,
               letterSpacing: "0.12em",
               color: accentColor,
-              marginBottom: 10,
+              margin: "0 0 10px 0",
             }}
           >
             ⚠ {title}
-          </div>
+          </h2>
 
           {/* Message */}
           <p
+            id="confirm-dialog-desc"
             style={{
               fontSize: 12,
               lineHeight: 1.65,
-              color: "rgba(255,255,255,0.65)",
+              color: "rgba(255,255,255,0.75)",
               margin: "0 0 18px",
               ...mono,
             }}
@@ -119,6 +170,7 @@ export function ConfirmDialog({
           {needsRetype && (
             <div style={{ marginBottom: 20 }}>
               <label
+                htmlFor="confirm-retype-input"
                 style={{
                   display: "block",
                   fontSize: 10,
@@ -130,6 +182,7 @@ export function ConfirmDialog({
                 TYPE THE ADDRESS BELOW TO CONFIRM
               </label>
               <input
+                id="confirm-retype-input"
                 ref={inputRef}
                 type="text"
                 value={typed}
@@ -137,13 +190,15 @@ export function ConfirmDialog({
                 placeholder={retypePlaceholder ?? retypeValue}
                 spellCheck={false}
                 autoComplete="off"
+                aria-invalid={typed.length > 0 && typed !== retypeValue}
+                aria-describedby={typed.length > 0 && typed !== retypeValue ? "retype-error-msg" : undefined}
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
                   padding: "9px 12px",
                   background: BG3,
                   border: `1px solid ${typed === retypeValue ? accentColor + "99" : BORDER}`,
-                  color: typed === retypeValue ? accentColor : "rgba(255,255,255,0.8)",
+                  color: typed === retypeValue ? accentColor : "rgba(255,255,255,0.9)",
                   fontSize: 11,
                   outline: "none",
                   transition: "border-color 0.15s, color 0.15s",
@@ -152,6 +207,8 @@ export function ConfirmDialog({
               />
               {typed.length > 0 && typed !== retypeValue && (
                 <div
+                  id="retype-error-msg"
+                  role="alert"
                   style={{
                     fontSize: 10,
                     color: STATUS_META.FAILED.color,
@@ -167,10 +224,11 @@ export function ConfirmDialog({
 
           {/* Actions */}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-            <ActionButton label="CANCEL" color={DIM.replace("0.35", "0.55")} onClick={onCancel} />
+            <ActionButton label="CANCEL" color="#aaa" onClick={onCancel} />
             <ActionButton
               label="CONFIRM →"
-              color={canConfirm ? accentColor : DIM}
+              color={canConfirm ? accentColor : "#666"}
+              disabled={!canConfirm}
               onClick={() => {
                 if (canConfirm) onConfirm();
               }}
