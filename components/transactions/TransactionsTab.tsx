@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { scValToNative } from "@stellar/stellar-sdk";
 import { TxTable } from "./TxTable";
 import { TxDetailModal } from "./TxDetailModal";
+import { TxCompareView } from "./TxCompareView";
 import { Panel } from "@/components/ui/Panel";
 import { Field } from "@/components/ui/Field";
 import { SorobanTip } from "@/components/ui/SorobanTip";
@@ -25,6 +26,8 @@ import { toCsv, toJson, downloadBlob } from "@/lib/export/formatters";
 import type { Transaction } from "@/lib/types";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
+const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID;
+const MAX_COMPARE = 4;
 
 export function TransactionsTab() {
   const [filter, setFilter] = useState("");
@@ -32,6 +35,8 @@ export function TransactionsTab() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [selected, setSelected] = useState<Transaction | null>(null);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [comparing, setComparing] = useState(false);
   const [cb, setCb] = useState({ tx_id: "", callback_url: "", secret: "" });
   const [lookingUp, setLookingUp] = useState(false);
   const [registering, setRegistering] = useState(false);
@@ -97,6 +102,19 @@ export function TransactionsTab() {
     commit(savedViews.filter((v) => v.id !== view.id));
     if (activeViewId === view.id) setActiveViewId(null);
   }
+
+  function toggleCompare(id: string) {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= MAX_COMPARE) {
+        toast(`You can compare at most ${MAX_COMPARE} transactions`, "error");
+        return prev;
+      }
+      return [...prev, id];
+    });
+  }
+
+  const compareTxs = txs.filter((t) => compareIds.includes(t.id));
 
   async function runLookup() {
     if (!filter.trim()) {
@@ -185,6 +203,9 @@ export function TransactionsTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-fade-in">
       {selected && <TxDetailModal tx={selected} onClose={() => setSelected(null)} />}
+      {comparing && compareTxs.length >= 2 && (
+        <TxCompareView txs={compareTxs} onClose={() => setComparing(false)} />
+      )}
 
       {/* Saved views */}
       <Panel title="SAVED VIEWS">
@@ -366,7 +387,43 @@ export function TransactionsTab() {
             ↓ JSON
           </button>
         </div>
-        <TxTable txs={filtered} onSelect={setSelected} />
+        <TxTable
+          txs={filtered}
+          onSelect={setSelected}
+          compareIds={compareIds}
+          onToggleCompare={toggleCompare}
+        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginTop: 12,
+          }}
+        >
+          <ActionButton
+            label={`COMPARE SELECTED (${compareIds.length}/${MAX_COMPARE})`}
+            color={AMBER}
+            disabled={compareIds.length < 2}
+            onClick={() => setComparing(true)}
+          />
+          {compareIds.length > 0 && (
+            <button
+              onClick={() => setCompareIds([])}
+              style={{
+                background: "transparent",
+                border: `1px solid ${BORDER}`,
+                color: "#aaa",
+                fontFamily: MONO,
+                fontSize: 11,
+                padding: "8px 14px",
+                cursor: "pointer",
+              }}
+            >
+              CLEAR
+            </button>
+          )}
+        </div>
       </Panel>
 
       {/* Callback registration */}

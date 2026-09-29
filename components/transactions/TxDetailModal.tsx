@@ -11,6 +11,7 @@ import { useSoroban } from "@/lib/soroban/SorobanProvider";
 import { invokeContract, simulateContractCall, stringArg } from "@/lib/soroban/contract";
 import { AMBER, BG1, BG2, BORDER, DIM, MONO, STATUS_META } from "@/lib/constants";
 import { formatAmount, shortId } from "@/lib/utils";
+import { TxTimeline, type TxTimelineEvent } from "@/components/transactions/TxTimeline";
 import type { Transaction } from "@/lib/types";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
@@ -21,6 +22,20 @@ const STUCK_THRESHOLD_MS = Number(process.env.NEXT_PUBLIC_STUCK_TX_THRESHOLD_MS 
 interface TxDetailModalProps {
   tx: Transaction;
   onClose: () => void;
+}
+
+/**
+ * Derive the observed lifecycle events for a transaction. Uses the explicit
+ * `events` array when present, otherwise falls back to the transaction's
+ * created_at + current status so the timeline always renders something useful.
+ */
+function buildTimelineEvents(tx: Transaction): TxTimelineEvent[] {
+  const raw = (tx as Transaction & { events?: TxTimelineEvent[] }).events;
+  if (Array.isArray(raw) && raw.length > 0) return raw;
+  return [
+    { status: "PENDING", timestamp: tx.created_at },
+    { status: tx.status, timestamp: tx.updated_at ?? tx.created_at },
+  ];
 }
 
 export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
@@ -132,6 +147,9 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
     ["created_at", new Date(tx.created_at).toISOString()],
     ["status", tx.status],
   ];
+
+  const timelineEvents = buildTimelineEvents(tx);
+  const inProgress = tx.status !== "COMPLETED" && tx.status !== "FAILED";
 
   return (
     <div
@@ -294,6 +312,22 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
           </div>
         )}
 
+        {/* Lifecycle timeline */}
+        <div style={{ marginBottom: 16 }}>
+          <div
+            style={{
+              fontFamily: MONO,
+              fontSize: 10,
+              color: AMBER,
+              letterSpacing: "0.08em",
+              marginBottom: 10,
+            }}
+          >
+            LIFECYCLE TIMELINE
+          </div>
+          <TxTimeline events={timelineEvents} inProgress={inProgress} />
+        </div>
+
         {/* Action buttons */}
         {showFailPrompt ? (
           <div
@@ -345,16 +379,76 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
                   setFailReason("");
                   await runTxCall("fail_transaction", [reason]);
                 }}
+                style={{
+                  background: STATUS_META.FAILED.color,
+                  border: "none",
+                  color: "#000",
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: "8px 14px",
+                  cursor: failReason.trim() ? "pointer" : "not-allowed",
+                  opacity: failReason.trim() ? 1 : 0.5,
+                }}
               >
-                Confirm Fail
+                CONFIRM FAIL
+              </button>
+              <button
+                onClick={() => {
+                  setShowFailPrompt(false);
+                  setFailReason("");
+                }}
+                style={{
+                  background: "none",
+                  border: `1px solid ${BORDER}`,
+                  color: DIM,
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  padding: "8px 14px",
+                  cursor: "pointer",
+                }}
+              >
+                CANCEL
+              </button>
               </button>
             </div>
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <ActionButton
+              label="PROCESS"
+              pending={pendingAction === "process_transaction"}
+              onClick={() => runTxCall("process_transaction")}
+            />
+            <ActionButton
+              label="COMPLETE"
+              pending={pendingAction === "complete_transaction"}
+              onClick={() => runTxCall("complete_transaction")}
+            />
+            <ActionButton
+              label="FAIL"
+              pending={pendingAction === "fail_transaction"}
+              onClick={() => setShowFailPrompt(true)}
+            />
             <ActionButton
               label={pendingAction === "is_duplicate" ? "Checking…" : "Check Duplicate"}
               disabled={pendingAction === "is_duplicate"}
+              onClick={runIsDuplicate}
+            />
+            <ActionButton
+              label="Fail Transaction"
+              disabled={pendingAction === "fail_transaction"}
+              onClick={() => setShowFailPrompt(true)}
+            />
+          </div>
+        )}
+
+        <SorobanTip />
+      </div>
+    </div>
+  );
+}
+
               onClick={runIsDuplicate}
             />
             <ActionButton

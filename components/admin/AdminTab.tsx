@@ -14,6 +14,7 @@ import { addressArg, invokeContract, simulateContractCall } from "@/lib/soroban/
 import { useDraftPersistence } from "@/lib/forms/useDraftPersistence";
 import { shortId } from "@/lib/utils";
 import { AMBER, BORDER, DIM, MONO, STATUS_META } from "@/lib/constants";
+import { validateValues, type ValidationSchema } from "@/lib/validation/schemas";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 
@@ -43,6 +44,7 @@ function AdminCard({
   title,
   tip,
   fields,
+  schema,
   onSubmit,
   btnLabel,
   btnColor = AMBER,
@@ -53,6 +55,7 @@ function AdminCard({
   title: string;
   tip: string;
   fields: FieldDef[];
+  schema: ValidationSchema;
   onSubmit: (vals: Record<string, string>) => void | Promise<void>;
   btnLabel: string;
   btnColor?: string;
@@ -63,6 +66,7 @@ function AdminCard({
   const initialVals = Object.fromEntries(fields.map((f) => [f.key, ""]));
   const { values: vals, setValues: setVals, restored, discard, clear } =
     useDraftPersistence<Record<string, string>>(initialVals, { key: draftKey });
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingVals, setPendingVals] = useState<Record<string, string> | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -76,8 +80,23 @@ function AdminCard({
     }
   }
 
+  function handleChange(key: string, value: string) {
+    setVals((p) => ({ ...p, [key]: value }));
+    // Clear a field's error as soon as the user edits it.
+    setErrors((p) => {
+      if (!p[key]) return p;
+      const next = { ...p };
+      delete next[key];
+      return next;
+    });
+  }
+
   function handleClick() {
     if (disabled) return;
+
+    const nextErrors = validateValues(schema, vals);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
     if (confirm) {
       setPendingVals({ ...vals });
     } else {
@@ -301,6 +320,7 @@ export function AdminTab() {
           { label: "admin", key: "admin", placeholder: "G… admin address" },
           { label: "relay_signer", key: "relay_signer", placeholder: "G… relay signer address" },
         ]}
+        schema={ADMIN_SCHEMAS.initialize}
         btnLabel="INITIALIZE →"
         draftKey="admin:initialize"
         disabled={isWatchOnly}
@@ -312,6 +332,7 @@ export function AdminTab() {
         title="TRANSFER ADMIN"
         tip="transfer_admin(new_admin: Address) — caller must be current admin; irreversible if wrong address"
         fields={[{ label: "new_admin", key: "new_admin", placeholder: "G… new admin address" }]}
+        schema={ADMIN_SCHEMAS.transfer_admin}
         btnLabel="TRANSFER →"
         btnColor={STATUS_META.FAILED.color}
         draftKey="admin:transfer_admin"
@@ -335,6 +356,7 @@ export function AdminTab() {
         fields={[
           { label: "new_signer", key: "new_signer", placeholder: "G… new relay signer address" },
         ]}
+        schema={ADMIN_SCHEMAS.set_relay_signer}
         btnLabel="SET SIGNER →"
         btnColor={STATUS_META.PROCESSING.color}
         disabled={isWatchOnly}
@@ -342,6 +364,7 @@ export function AdminTab() {
           title: "SET RELAY SIGNER",
           message:
             "This updates the relay signer authorized to submit relayed transactions. " +
+            "Confirm the new signer address is correct before continuing.",
             "Confirm the new signer address is correct before continuing.",
           accentColor: STATUS_META.PROCESSING.color,
         }}
@@ -356,6 +379,17 @@ export function AdminTab() {
             color={DIM}
             onClick={() => runDiagnostic("ping")}
           />
+          <ActionButton
+            label="GET ADMIN →"
+            color={DIM}
+            onClick={() => runDiagnostic("get_admin")}
+          />
+          <ActionButton
+            label="GET RELAY SIGNER →"
+            color={DIM}
+            onClick={() => runDiagnostic("get_relay_signer")}
+          />
+        </div>
           <ActionButton
             label="GET ADMIN →"
             color={DIM}
