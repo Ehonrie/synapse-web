@@ -12,12 +12,21 @@ import { invokeContract, simulateContractCall, stringArg } from "@/lib/soroban/c
 import { AMBER, BG1, BG2, BORDER, DIM, MONO, STATUS_META } from "@/lib/constants";
 import { formatAmount, shortId } from "@/lib/utils";
 import { TxTimeline, type TxTimelineEvent } from "@/components/transactions/TxTimeline";
-import type { Transaction } from "@/lib/types";
+import type { Transaction, TxStatus } from "@/lib/types";
+import { TxReceiptPrintView } from "./TxReceiptPrintView";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 
 // A transaction pending beyond this many milliseconds is eligible for a fee-bump "speed up".
 const STUCK_THRESHOLD_MS = Number(process.env.NEXT_PUBLIC_STUCK_TX_THRESHOLD_MS ?? 120_000);
+
+// Optimistic lifecycle transitions: the status we expect the poller to observe
+// once the submitted write action is confirmed on-chain.
+const OPTIMISTIC_STATUS: Record<string, TxStatus> = {
+  start_processing: "PROCESSING",
+  complete_transaction: "COMPLETED",
+  fail_transaction: "FAILED",
+};
 
 interface TxDetailModalProps {
   tx: Transaction;
@@ -42,12 +51,22 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
   const [showFailPrompt, setShowFailPrompt] = useState(false);
   const [failReason, setFailReason] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  // Optimistic overlay: locally-pending status shown immediately on submission,
+  // reconciled with the poller-observed tx.status once it catches up.
+  const [optimisticStatus, setOptimisticStatus] = useState<TxStatus | null>(null);
+  const [optimisticError, setOptimisticError] = useState<string | null>(null);
+  const [showReceipt, setShowReceipt] = useState(false);
   const [estimatedFee, setEstimatedFee] = useState<string | null>(null);
   const [feeBumpHash, setFeeBumpHash] = useState<string | null>(null);
   const { address, connect } = useWallet();
   const { contractId } = useSoroban();
   const { toast } = useToast();
-  const m = STATUS_META[tx.status];
+
+  // Reconcile: once the poller-observed status matches the optimistic target,
+  // drop the overlay so the confirmed state takes over.
+  const reconciled = optimisticStatus !== null && tx.status === optimisticStatus;
+  const displayStatus = reconciled ? tx.status : optimisticStatus ?? tx.status;
+  const m = STATUS_META[displayStatus];
 
   const isStuck =
     tx.status === "PENDING" && Date.now() - new Date(tx.created_at).getTime() > STUCK_THRESHOLD_MS;
@@ -62,18 +81,28 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
       await connect();
       return;
     }
+    const optimistic = OPTIMISTIC_STATUS[method];
     setPendingAction(method);
+    setOptimisticError(null);
+    if (optimistic) setOptimisticStatus(optimistic);
     try {
       const args = [stringArg(tx.id), ...extraArgs.map(stringArg)];
       // Estimate the network fee from the simulation's resource usage before signing.
       const preview = await simulateContractCall(RPC_URL, contractId, address, method, args);
       setEstimatedFee(preview.estimatedFee);
       const result = await invokeContract(RPC_URL, contractId, address, method, args);
-      toast(
-        `${method}() ${result.status === "SUCCESS" ? "succeeded" : "failed"} · tx ${shortId(result.hash)}`,
-        result.status === "SUCCESS" ? "success" : "error"
-      );
+      if (result.status === "SUCCESS") {
+        toast(`${method}() succeeded · tx ${shortId(result.hash)}`, "success");
+      } else {
+        // Submission failed/reverted: roll back the optimistic overlay.
+        setOptimisticStatus(null);
+        setOptimisticError(`${method}() failed on-chain`);
+        toast(`${method}() failed · tx ${shortId(result.hash)}`, "error");
+      }
     } catch (err) {
+      // Submission threw: roll back the optimistic overlay with a clear error.
+      setOptimisticStatus(null);
+      setOptimisticError(err instanceof Error ? err.message : `${method}() failed`);
       toast(err instanceof Error ? err.message : `${method}() failed`, "error");
     } finally {
       setPendingAction(null);
@@ -145,7 +174,7 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
     ["callback_url", tx.callback_url],
     ["retries", String(tx.retries)],
     ["created_at", new Date(tx.created_at).toISOString()],
-    ["status", tx.status],
+    ["status", displayStatus],
   ];
 
   const timelineEvents = buildTimelineEvents(tx);
@@ -197,7 +226,36 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
             TX DETAIL
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Badge status={tx.status} />
+            <Badge status={displayStatus} />
+            {optimisticStatus !== null && !reconciled && (
+              <span
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 9,
+                  color: AMBER,
+                  letterSpacing: "0.08em",
+                }}
+              >
+                PENDING CONFIRMATION
+              </span>
+            )}
+            <button
+              onClick={() => setShowReceipt(true)}
+              aria-label="Print receipt"
+              title="Print receipt"
+              style={{
+                background: "none",
+                border: `1px solid ${BORDER}`,
+                color: DIM,
+                cursor: "pointer",
+                fontFamily: MONO,
+                fontSize: 9,
+                letterSpacing: "0.08em",
+                padding: "3px 8px",
+              }}
+            >
+              RECEIPT
+            </button>
             <button
               onClick={onClose}
               aria-label="Close"
@@ -214,6 +272,23 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
             </button>
           </div>
         </div>
+
+        {optimisticError && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 12,
+              padding: "8px 10px",
+              background: BG2,
+              border: `1px solid ${STATUS_META.FAILED.color}55`,
+              color: STATUS_META.FAILED.color,
+              fontFamily: MONO,
+              fontSize: 10,
+            }}
+          >
+            ⚠ {optimisticError} — reverted to confirmed state
+          </div>
+        )}
 
         {/* Fields */}
         <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
@@ -238,22 +313,24 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
                     fontSize: 10,
                     color: "#ddd",
                     fontFamily: MONO,
-                    wordBreak: "break-all",
+                    wordBreak: "break-word",
+                    overflowWrap: "anywhere",
                   }}
                 >
-                  <span style={{ verticalAlign: "middle" }}>{v}</span>
-                  {(k === "id" || k === "from" || k === "to") && (
-                    <CopyButton
-                      value={v}
-                      label={k === "id" ? "Tx ID" : k === "from" ? "From address" : "To address"}
-                      style={{ marginLeft: 6, verticalAlign: "middle" }}
-                    />
-                  )}
+                  {v}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+
+        {showReceipt && (
+          <TxReceiptPrintView
+            tx={tx}
+            displayStatus={displayStatus}
+            onClose={() => setShowReceipt(false)}
+          />
+        )}
 
         {/* Estimated network fee from simulation preview */}
         {estimatedFee && (
@@ -410,7 +487,6 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
               >
                 CANCEL
               </button>
-              </button>
             </div>
           </div>
         ) : (
@@ -449,17 +525,6 @@ export function TxDetailModal({ tx, onClose }: TxDetailModalProps) {
   );
 }
 
-              onClick={runIsDuplicate}
-            />
-            <ActionButton
-              label="Fail Transaction"
-              disabled={pendingAction === "fail_transaction"}
-              onClick={() => setShowFailPrompt(true)}
-            />
-          </div>
-        )}
-
-        <SorobanTip />
       </div>
     </div>
   );

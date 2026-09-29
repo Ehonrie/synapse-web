@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { scValToNative } from "@stellar/stellar-sdk";
 import { TxTable } from "./TxTable";
 import { TxDetailModal } from "./TxDetailModal";
@@ -30,6 +31,9 @@ const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID;
 const MAX_COMPARE = 4;
 
 export function TransactionsTab() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -47,6 +51,41 @@ export function TransactionsTab() {
   const { address, connect } = useWallet();
   const { contractId } = useSoroban();
   const { toast } = useToast();
+
+  // Hydrate filter + selected transaction from the URL query string.
+  useEffect(() => {
+    const urlFilter = searchParams.get("filter") ?? "";
+    setFilter((prev) => (prev === urlFilter ? prev : urlFilter));
+
+    const txId = searchParams.get("tx_id");
+    if (!txId) {
+      setSelected((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const match = txs.find((t) => t.id === txId);
+    // Malformed/stale tx_id that no longer resolves is ignored gracefully.
+    setSelected((prev) => (prev?.id === match?.id ? prev : match ?? null));
+  }, [searchParams, txs]);
+
+  function syncUrl(nextFilter: string, nextSelected: Transaction | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextFilter) params.set("filter", nextFilter);
+    else params.delete("filter");
+    if (nextSelected) params.set("tx_id", nextSelected.id);
+    else params.delete("tx_id");
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
+
+  function updateFilter(value: string) {
+    setFilter(value);
+    syncUrl(value, selected);
+  }
+
+  function updateSelected(tx: Transaction | null) {
+    setSelected(tx);
+    syncUrl(filter, tx);
+  }
 
   // Load persisted views once on mount (per-browser persistence).
   useEffect(() => {
@@ -298,7 +337,7 @@ export function TransactionsTab() {
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => updateFilter(e.target.value)}
             placeholder="filter by tx_id · status · asset · memo…"
             style={{
               flex: 1,

@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardTab } from "./dashboard/DashboardTab";
 import { TransactionsTab } from "./transactions/TransactionsTab";
 import { AdminTab } from "./admin/AdminTab";
@@ -8,6 +9,7 @@ import { AnalyticsTab } from "./analytics/AnalyticsTab";
 import { NotificationCenter } from "./notifications/NotificationCenter";
 import { NotificationProvider } from "@/lib/notifications/NotificationStore";
 import { TabErrorBoundary } from "@/components/ui/TabErrorBoundary";
+import { CommandPalette, type Command } from "./command-palette/CommandPalette";
 import { SessionAuditPanel } from "@/components/wallet/SessionAuditPanel";
 import { ContractSwitcher } from "@/components/ui/ContractSwitcher";
 import { AMBER, BG1, BORDER, DIM, MONO, STATUS_META } from "@/lib/constants";
@@ -30,8 +32,30 @@ function getPreferredTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+function isTab(value: string | null): value is Tab {
+  return value !== null && (TABS as string[]).includes(value);
+}
+
 export function Shell() {
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab: Tab = isTab(tabParam) ? tabParam : "dashboard";
+
+  const setTab = useCallback(
+    (next: Tab) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === "dashboard") {
+        params.delete("tab");
+      } else {
+        params.set("tab", next);
+      }
+      const qs = params.toString();
+      router.push(qs ? `?${qs}` : "?", { scroll: false });
+    },
+    [router, searchParams],
+  );
+
   const [theme, setTheme] = useState<Theme>("dark");
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const { status: rpcStatus, lastEventAge, health: rpcHealth } = useSorobanStatus();
@@ -62,6 +86,71 @@ export function Shell() {
     }
     prevAddress.current = address;
   }, [address, toast]);
+
+  // ── Command palette ──
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const commands = useMemo<Command[]>(() => {
+    const navCommands: Command[] = TABS.map((t) => ({
+      id: `nav-${t}`,
+      label: `Go to ${t}`,
+      keywords: ["navigate", "tab", t],
+      action: () => setTab(t),
+    }));
+
+    const actionCommands: Command[] = [
+      {
+        id: "wallet-toggle",
+        label: connected ? "Disconnect wallet" : "Connect wallet",
+        keywords: ["wallet", "connect", "disconnect", "account"],
+        action: () => (connected ? disconnect() : connect()),
+      },
+      {
+        id: "open-transactions",
+        label: "Open transactions",
+        keywords: ["transactions", "tx", "history", "activity"],
+        action: () => setTab("transactions"),
+      },
+    ];
+
+    const settingsCommands: Command[] = [
+      {
+        id: "toggle-theme",
+        label: "Toggle theme",
+        keywords: ["theme", "dark", "light", "appearance", "settings"],
+        action: () => {
+          const root = document.documentElement;
+          const next = root.dataset.theme === "light" ? "dark" : "light";
+          root.dataset.theme = next;
+          toast(`Theme: ${next}`, "success");
+        },
+      },
+      {
+        id: "toggle-locale",
+        label: "Toggle locale",
+        keywords: ["locale", "language", "i18n", "settings"],
+        action: () => {
+          const root = document.documentElement;
+          const next = root.lang === "en" ? "es" : "en";
+          root.lang = next;
+          toast(`Locale: ${next}`, "success");
+        },
+      },
+    ];
+
+    return [...navCommands, ...actionCommands, ...settingsCommands];
+  }, [connected, connect, disconnect, setTab, toast]);
 
   useEffect(() => {
     if (!canSwitch) setSwitcherOpen(false);
@@ -356,6 +445,11 @@ export function Shell() {
         </span>
       </footer>
 
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        commands={commands}
+      />
       <ProfilerOverlay />
     </div>
     </NotificationProvider>

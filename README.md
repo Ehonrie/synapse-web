@@ -26,6 +26,8 @@ synapse-web/
 │   └── error.tsx / not-found.tsx
 ├── components/
 │   ├── Shell.tsx           # Top-level shell: header, tab bar, footer
+│   ├── command-palette/
+│   │   └── CommandPalette.tsx      # Cmd/Ctrl+K fuzzy-searchable command list
 │   ├── dashboard/
 │   │   ├── DashboardTab.tsx        # Composes the dashboard view
 │   │   ├── StatCards.tsx           # PENDING / PROCESSING / COMPLETED / FAILED counts
@@ -134,9 +136,21 @@ npm run lint         # ESLint
 npm run test         # Run the test suite once
 npm run test:watch   # Run the test suite in watch mode
 npm run format       # Prettier (writes)
-npm run format:check # Prettier (CI check)
-npx tsc --noEmit     # Type-check without emitting
 ```
+
+---
+
+## Keyboard shortcuts
+
+| Shortcut            | Action                                                                 |
+| ------------------- | ---------------------------------------------------------------------- |
+| `Cmd/Ctrl + K`      | Open the command palette (navigation, actions, settings)               |
+| `↑` / `↓`           | Move the highlighted command in the palette                            |
+| `Enter`             | Run the highlighted command                                            |
+| `Esc`               | Close the palette (or clear the query when one is typed)               |
+
+The palette is fully keyboard-operable — no mouse required. It traps focus while
+open and restores focus to the previously active element on close.
 
 ---
 
@@ -164,6 +178,8 @@ Notable milestones on the path to a working testnet client:
       `useLiveContractInfo`), falling back to mock data when no wallet/contract is configured
 - [x] Integrate `@creit.tech/stellar-wallets-kit` (Freighter / xBull) for wallet connection
       (`lib/wallet/`)
+- [x] Command palette (`Cmd/Ctrl+K`) for tab navigation, key actions, and settings toggles
+      (`components/command-palette/CommandPalette.tsx`)
 - [ ] Backend relay service for `register_transaction`, `start_processing`, `complete_transaction`,
       `fail_transaction`, and `register_callback` webhooks
 - [ ] Fetch `admin` / `relay_signer` from the deployed contract once it exposes a getter for them
