@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { useSoroban } from "@/lib/soroban/SorobanProvider";
 import { addressArg, invokeContract, simulateContractCall } from "@/lib/soroban/contract";
+import { useDraftPersistence } from "@/lib/forms/useDraftPersistence";
 import { shortId } from "@/lib/utils";
 import { AMBER, BORDER, DIM, MONO, STATUS_META } from "@/lib/constants";
 
@@ -46,7 +47,8 @@ function AdminCard({
   btnLabel,
   btnColor = AMBER,
   confirm,
-  disabled = false,
+  draftKey: string;
+  disabled?: boolean;
 }: {
   title: string;
   tip: string;
@@ -55,11 +57,12 @@ function AdminCard({
   btnLabel: string;
   btnColor?: string;
   confirm?: ConfirmConfig;
-  disabled?: boolean;
+  draftKey,
+  disabled = false,
 }) {
-  const [vals, setVals] = useState<Record<string, string>>(
-    Object.fromEntries(fields.map((f) => [f.key, ""]))
-  );
+  const initialVals = Object.fromEntries(fields.map((f) => [f.key, ""]));
+  const { values: vals, setValues: setVals, restored, discard, clear } =
+    useDraftPersistence<Record<string, string>>(initialVals, { key: draftKey });
   const [pendingVals, setPendingVals] = useState<Record<string, string> | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -67,6 +70,7 @@ function AdminCard({
     setSubmitting(true);
     try {
       await onSubmit(v);
+      clear();
     } finally {
       setSubmitting(false);
     }
@@ -92,6 +96,47 @@ function AdminCard({
   return (
     <>
       <Panel title={title}>
+        {restored && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: 12,
+              padding: "8px 12px",
+              background: "rgba(255,193,7,0.08)",
+              border: `1px solid ${AMBER}`,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 10,
+                color: AMBER,
+                fontFamily: MONO,
+                letterSpacing: "0.06em",
+              }}
+            >
+              ⟲ RESTORED DRAFT — unsaved input was recovered
+            </span>
+            <button
+              type="button"
+              onClick={discard}
+              style={{
+                background: "transparent",
+                border: `1px solid ${BORDER}`,
+                color: DIM,
+                fontFamily: MONO,
+                fontSize: 10,
+                letterSpacing: "0.06em",
+                padding: "4px 10px",
+                cursor: "pointer",
+              }}
+            >
+              DISCARD
+            </button>
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
           {fields.map((f) => (
             <div key={f.key}>
@@ -257,6 +302,7 @@ export function AdminTab() {
           { label: "relay_signer", key: "relay_signer", placeholder: "G… relay signer address" },
         ]}
         btnLabel="INITIALIZE →"
+        draftKey="admin:initialize"
         disabled={isWatchOnly}
         onSubmit={(v) => runAdminCall("initialize", [v.admin ?? "", v.relay_signer ?? ""])}
       />
@@ -268,6 +314,7 @@ export function AdminTab() {
         fields={[{ label: "new_admin", key: "new_admin", placeholder: "G… new admin address" }]}
         btnLabel="TRANSFER →"
         btnColor={STATUS_META.FAILED.color}
+        draftKey="admin:transfer_admin"
         disabled={isWatchOnly}
         confirm={{
           title: "TRANSFER ADMIN — IRREVERSIBLE",
